@@ -1,50 +1,38 @@
-import makeWASocket, {
-  useMultiFileAuthState,
-  DisconnectReason
-} from "@whiskeysockets/baileys";
-import pino from "pino";
-import readline from "readline";
+import express from "express"
+import { createPairCode } from "./pair.js"
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+const app = express()
+const PORT = process.env.PORT || 3000
 
-async function startSession() {
-  const { state, saveCreds } = await useMultiFileAuthState("session");
+app.get("/", async (req, res) => {
+  const phone = req.query.phone
 
-  const sock = makeWASocket({
-    logger: pino({ level: "silent" }),
-    auth: state,
-    printQRInTerminal: true,
-    browser: ["NEXTY XMD SESSION", "Chrome", "1.0"]
-  });
-
-  // Pair code (without QR)
-  if (!sock.authState.creds.registered) {
-    rl.question("📞 Enter WhatsApp number with country code: ", async (num) => {
-      const code = await sock.requestPairingCode(num.trim());
-      console.log("\n🔑 PAIR CODE:", code);
-      rl.close();
-    });
+  if (!phone) {
+    return res.send(`
+      <h2>NEXTY XMD – Session / Pair Code Generator</h2>
+      <form method="GET">
+        <input name="phone" placeholder="923xxxxxxxxx" required />
+        <button type="submit">Generate Pair Code</button>
+      </form>
+    `)
   }
 
-  sock.ev.on("creds.update", saveCreds);
+  try {
+    const code = await createPairCode(phone)
+    res.send(`
+      <h2>PAIR CODE GENERATED</h2>
+      <h1>${code}</h1>
+      <p>
+        WhatsApp → Settings → Linked Devices → Link a device<br>
+        Enter this code
+      </p>
+      <p><b>Session ID will arrive in Message Yourself</b></p>
+    `)
+  } catch (err) {
+    res.send("❌ Failed to generate pair code")
+  }
+})
 
-  sock.ev.on("connection.update", (update) => {
-    if (update.connection === "open") {
-      console.log("\n✅ SESSION GENERATED SUCCESSFULLY");
-      console.log("📁 session/creds.json READY");
-    }
-
-    if (
-      update.connection === "close" &&
-      update.lastDisconnect?.error?.output?.statusCode !==
-        DisconnectReason.loggedOut
-    ) {
-      startSession();
-    }
-  });
-}
-
-startSession();
+app.listen(PORT, () => {
+  console.log("NEXTY XMD Session Generator running on", PORT)
+})
