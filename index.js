@@ -1,35 +1,50 @@
-import makeWASocket, { useMultiFileAuthState } from "@adiwajshing/baileys";
+import makeWASocket, {
+  useMultiFileAuthState,
+  DisconnectReason
+} from "@whiskeysockets/baileys";
+import pino from "pino";
+import readline from "readline";
 
-async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("./auth");
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+async function startSession() {
+  const { state, saveCreds } = await useMultiFileAuthState("session");
 
   const sock = makeWASocket({
+    logger: pino({ level: "silent" }),
     auth: state,
-    printQRInTerminal: false // ❌ QR disabled
+    printQRInTerminal: true,
+    browser: ["NEXTY XMD SESSION", "Chrome", "1.0"]
   });
+
+  // Pair code (without QR)
+  if (!sock.authState.creds.registered) {
+    rl.question("📞 Enter WhatsApp number with country code: ", async (num) => {
+      const code = await sock.requestPairingCode(num.trim());
+      console.log("\n🔑 PAIR CODE:", code);
+      rl.close();
+    });
+  }
 
   sock.ev.on("creds.update", saveCreds);
 
-  // 👉 Pair code generate (ONLY once)
-  if (!sock.authState.creds.registered) {
-    const phoneNumber = process.env.PHONE; 
-    if (!phoneNumber) {
-      console.log("❌ PHONE number missing in config vars");
-      return;
+  sock.ev.on("connection.update", (update) => {
+    if (update.connection === "open") {
+      console.log("\n✅ SESSION GENERATED SUCCESSFULLY");
+      console.log("📁 session/creds.json READY");
     }
 
-    const code = await sock.requestPairingCode(phoneNumber);
-    console.log("=================================");
-    console.log("✅ WHATSAPP PAIR CODE:", code);
-    console.log("📱 WhatsApp > Linked devices > Link with phone number");
-    console.log("=================================");
-  }
-
-  sock.ev.on("connection.update", (u) => {
-    if (u.connection === "open") {
-      console.log("🎉 WhatsApp Bot Connected!");
+    if (
+      update.connection === "close" &&
+      update.lastDisconnect?.error?.output?.statusCode !==
+        DisconnectReason.loggedOut
+    ) {
+      startSession();
     }
   });
 }
 
-startBot();
+startSession();
